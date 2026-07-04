@@ -54,6 +54,7 @@ const Store = (() => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       DB.put("state", "state", state).catch((e) => console.error("Save failed", e));
+      if (typeof FileSync !== "undefined") FileSync.scheduleWrite();
     }, 200);
   }
 
@@ -288,9 +289,8 @@ const Store = (() => {
     return JSON.stringify(clone, null, 2);
   }
 
-  async function importJSON(text) {
-    const s = JSON.parse(text);
-    if (!s || !s.boards || !s.rootId || !s.boards[s.rootId]) throw new Error("Not a valid export file");
+  async function importData(s) {
+    if (!s || !s.boards || !s.rootId || !s.boards[s.rootId]) throw new Error("Not a valid board file");
     await internImages(s);
     if (!s.boards[s.currentId]) s.currentId = s.rootId;
     state = s;
@@ -298,6 +298,16 @@ const Store = (() => {
     redoStack.length = 0;
     await DB.put("state", "state", state);
     gcImages().catch(() => {});
+  }
+
+  const importJSON = (text) => importData(JSON.parse(text));
+
+  async function reset() {
+    const root = blankBoard("My Board");
+    state = { boards: { [root.id]: root }, rootId: root.id, currentId: root.id };
+    undoStack.length = 0;
+    redoStack.length = 0;
+    await DB.put("state", "state", state);
   }
 
   return {
@@ -311,6 +321,6 @@ const Store = (() => {
     putImage, getImageURL,
     undo: () => restore(undoStack, redoStack),
     redo: () => restore(redoStack, undoStack),
-    exportJSON, importJSON,
+    exportJSON, importJSON, importData, reset,
   };
 })();

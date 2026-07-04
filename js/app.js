@@ -293,7 +293,9 @@ const App = (() => {
   setTimeout(() => document.getElementById("hint").classList.add("faded"), 8000);
 
   // ---------- init ----------
-  Store.init().then(() => Board.renderBoard());
+  Store.init()
+    .then(() => FileSync.init().catch((e) => console.warn("File sync init failed", e)))
+    .then(() => Board.renderBoard());
 
   return { exitConnectMode, addItem };
 })();

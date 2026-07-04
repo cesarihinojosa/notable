@@ -56,6 +56,13 @@ body {
 #topbar-actions button:hover { background: #f4f6f8; }
 #zoom-label { font-size: 12px; color: var(--ink-soft); width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
 
+#file-status { display: flex; align-items: center; gap: 7px; max-width: 260px; }
+#file-status .dot { width: 8px; height: 8px; border-radius: 50%; background: #b6bcc2; flex-shrink: 0; }
+#file-status[data-state="linked"] .dot { background: #45b06c; }
+#file-status[data-state="saving"] .dot { background: #e8b84a; }
+#file-status[data-state="reconnect"] .dot, #file-status[data-state="error"] .dot { background: #e0684f; }
+#file-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 #toolbar {
   position: fixed;
   left: 12px; top: 50%;
@@ -226,19 +233,19 @@ body {
 
 /* ---------- context menu / color picker ---------- */
 
-#ctxmenu {
+#ctxmenu, .popmenu {
   position: fixed; z-index: 100;
   background: var(--panel); border: 1px solid #dfe2e6; border-radius: 8px;
   box-shadow: var(--shadow-lift);
   padding: 5px; min-width: 150px;
 }
-#ctxmenu button {
+#ctxmenu button, .popmenu button {
   display: block; width: 100%; text-align: left;
   border: 0; background: none; font: inherit; font-size: 13px;
   padding: 6px 10px; border-radius: 5px; cursor: pointer; color: var(--ink);
 }
-#ctxmenu button:hover { background: #f0f2f4; }
-#ctxmenu button.danger:hover { background: #fdecec; color: #c0392b; }
+#ctxmenu button:hover, .popmenu button:hover { background: #f0f2f4; }
+#ctxmenu button.danger:hover, .popmenu button.danger:hover { background: #fdecec; color: #c0392b; }
 #ctxmenu .swatches { display: flex; gap: 5px; padding: 6px 10px; }
 #ctxmenu .swatch {
   width: 20px; height: 20px; border-radius: 50%; cursor: pointer;
