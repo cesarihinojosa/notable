@@ -61,6 +61,9 @@ const Board = (() => {
       els.set(item.id, el);
       itemsLayer.appendChild(el);
     }
+    itemsLayer.appendChild(dropInd);
+    dropInd.hidden = true;
+    layoutColumns();
     applyView();
     renderEdges();
     renderBreadcrumbs();
@@ -75,6 +78,7 @@ const Board = (() => {
     if (selection.has(id)) el.classList.add("selected");
     if (old) old.replaceWith(el); else itemsLayer.appendChild(el);
     els.set(id, el);
+    layoutColumns();
     renderEdges();
     if (focus) {
       const f = el.querySelector(focus);
@@ -215,6 +219,95 @@ const Board = (() => {
 
   let pendingEdge = null;
 
+  // ---------- column layout ----------
+  const COL_PAD = 10, COL_GAP = 8, COL_TITLE_H = 32;
+
+  const dropInd = document.createElement("div");
+  dropInd.id = "drop-indicator";
+  dropInd.hidden = true;
+
+  function layoutColumns() {
+    let changed = false;
+    for (const item of Object.values(Store.board().items)) {
+      if (item.type === "column") changed = layoutColumn(item) || changed;
+    }
+    if (changed) Store.save();
+  }
+
+  function layoutColumn(col) {
+    let changed = false;
+    const children = (col.children || []).map(id => Store.board().items[id]).filter(Boolean);
+    const w = col.w - COL_PAD * 2;
+    let y = col.y + COL_TITLE_H + COL_PAD;
+    for (const ch of children) {
+      const x = col.x + COL_PAD;
+      if (ch.x !== x || ch.y !== y || ch.w !== w) { ch.x = x; ch.y = y; ch.w = w; changed = true; }
+      const el = els.get(ch.id);
+      if (el) {
+        Cards.position(el, ch);
+        el.style.zIndex = (col.z || 1) + 1;
+        y += el.offsetHeight + COL_GAP;
+      } else {
+        y += 60;
+      }
+    }
+    const contentH = y - col.y + COL_PAD - (children.length ? COL_GAP : 0);
+    const colEl = els.get(col.id);
+    if (colEl) colEl.style.height = Math.max(col.h || 120, contentH) + "px";
+    return changed;
+  }
+
+  function columnAtPoint(pt, excludeIds = new Set()) {
+    let best = null;
+    for (const item of Object.values(Store.board().items)) {
+      if (item.type !== "column" || excludeIds.has(item.id)) continue;
+      const el = els.get(item.id);
+      if (!el) continue;
+      const h = el.offsetHeight;
+      if (pt.x >= item.x && pt.x <= item.x + item.w && pt.y >= item.y && pt.y <= item.y + h) {
+        if (!best || (item.z || 0) > (best.z || 0)) best = item;
+      }
+    }
+    return best;
+  }
+
+  function insertionIndex(col, y, excludeId) {
+    const children = (col.children || []).filter(id => id !== excludeId);
+    let idx = 0;
+    for (const cid of children) {
+      const ch = Store.board().items[cid];
+      const el = els.get(cid);
+      if (!ch || !el) continue;
+      if (y > ch.y + el.offsetHeight / 2) idx++;
+    }
+    return idx;
+  }
+
+  function showDropHints(col, y, excludeId) {
+    for (const [id, el] of els) {
+      el.classList.toggle("drop-target", col !== null && id === col.id);
+    }
+    if (!col) { dropInd.hidden = true; return; }
+    const idx = insertionIndex(col, y, excludeId);
+    const children = (col.children || []).filter(id => id !== excludeId);
+    let indY;
+    if (idx === 0) {
+      indY = col.y + COL_TITLE_H + COL_PAD - COL_GAP / 2 - 1;
+    } else {
+      const prev = Store.board().items[children[idx - 1]];
+      const prevEl = els.get(children[idx - 1]);
+      indY = prev && prevEl ? prev.y + prevEl.offsetHeight + COL_GAP / 2 - 1 : col.y + COL_TITLE_H + COL_PAD;
+    }
+    dropInd.style.transform = `translate(${col.x + COL_PAD}px, ${indY}px)`;
+    dropInd.style.width = (col.w - COL_PAD * 2) + "px";
+    dropInd.hidden = false;
+  }
+
+  function hideDropHints() {
+    dropInd.hidden = true;
+    for (const el of els.values()) el.classList.remove("drop-target");
+  }
+
   // ---------- selection ----------
   function clearSelection() {
     selection.clear();
@@ -291,11 +384,24 @@ const Board = (() => {
   // drag selected cards
   function startDrag(e) {
     const startMouse = toWorld(e.clientX, e.clientY);
-    const starts = new Map();
+
+    // dragging a column carries its docked children along
+    const dragIds = new Set(selection);
     for (const id of selection) {
       const it = Store.board().items[id];
-      starts.set(id, { x: it.x, y: it.y });
+      if (it?.type === "column") for (const cid of it.children || []) dragIds.add(cid);
     }
+    const starts = new Map();
+    for (const id of dragIds) {
+      const it = Store.board().items[id];
+      if (it) starts.set(id, { x: it.x, y: it.y });
+    }
+
+    // only a single non-column card can dock into a column
+    const single = selection.size === 1 ? [...selection][0] : null;
+    const singleItem = single ? Store.board().items[single] : null;
+    const canDock = singleItem && singleItem.type !== "column";
+
     let moved = false;
 
     const onMove = (ev) => {
@@ -305,7 +411,7 @@ const Board = (() => {
       if (!moved) {
         moved = true;
         Store.snapshot();
-        for (const id of selection) els.get(id)?.classList.add("dragging");
+        for (const id of dragIds) els.get(id)?.classList.add("dragging");
       }
       for (const [id, s] of starts) {
         const item = Store.board().items[id];
@@ -315,13 +421,39 @@ const Board = (() => {
         const el = els.get(id);
         if (el) el.style.transform = `translate(${item.x}px, ${item.y}px)`;
       }
+      if (canDock) showDropHints(columnAtPoint(m, dragIds), m.y, single);
       renderEdges();
     };
-    const onUp = () => {
+    const onUp = (ev) => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      if (moved) {
-        for (const id of selection) els.get(id)?.classList.remove("dragging");
+      if (!moved) return;
+      for (const id of dragIds) els.get(id)?.classList.remove("dragging");
+      hideDropHints();
+
+      const m = toWorld(ev.clientX, ev.clientY);
+      let structural = false;
+      const targetCol = canDock ? columnAtPoint(m, dragIds) : null;
+      if (targetCol) {
+        Store.dockItem(single, targetCol.id, insertionIndex(targetCol, m.y, single));
+        structural = true;
+      } else {
+        // any selected docked card dropped outside a column becomes free
+        for (const id of selection) {
+          const it = Store.board().items[id];
+          if (it && it.type !== "column" && Store.findColumnOf(id)) {
+            Store.undockItem(id);
+            structural = true;
+          }
+        }
+      }
+      if (structural) {
+        const keep = [...selection];
+        renderBoard();
+        select(keep);
+      } else {
+        layoutColumns();
+        renderEdges();
         Store.save();
       }
     };
@@ -345,6 +477,7 @@ const Board = (() => {
       item.w = Math.max(120, Math.round(w0 + (m.x - start.x)));
       if (fixedHeight) item.h = Math.max(60, Math.round(h0 + (m.y - start.y)));
       Cards.position(el, item);
+      if (item.type === "column") layoutColumn(item);
       renderEdges();
     };
     const onUp = () => {
@@ -462,6 +595,7 @@ const Board = (() => {
     },
     get connectFrom() { return connectFrom; },
     toWorld, centerOn, zoomAt, isTyping,
+    columnAtPoint, layoutColumns,
     els,
   };
 })();

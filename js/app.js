@@ -27,6 +27,10 @@ const App = (() => {
       props.src = src.trim();
     }
     const item = Store.createItem(type, props);
+    if (type !== "column") {
+      const col = Board.columnAtPoint(pos);
+      if (col) Store.dockItem(item.id, col.id, Infinity);
+    }
     const focusMap = {
       note: ".text",
       todo: ".todo-item .todo-text",
@@ -44,7 +48,8 @@ const App = (() => {
   });
 
   viewport.addEventListener("dblclick", (e) => {
-    if (e.target.closest(".card")) return;
+    const cardEl = e.target.closest(".card");
+    if (cardEl && !cardEl.classList.contains("column")) return;
     addItem("note", Board.toWorld(e.clientX, e.clientY));
   });
 

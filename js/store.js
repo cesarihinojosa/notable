@@ -126,6 +126,7 @@ const Store = (() => {
   function createItem(type, props) {
     snapshot();
     const item = { id: uid(), type, x: 0, y: 0, w: 220, h: null, color: null, z: nextZ(), ...props };
+    if (type === "column" && !item.children) item.children = [];
     if (type === "board") {
       const child = blankBoard(props.name || "", state.currentId);
       state.boards[child.id] = child;
@@ -152,13 +153,46 @@ const Store = (() => {
   function removeItems(ids) {
     snapshot();
     const b = board();
+    const toRemove = new Set(ids);
     for (const id of ids) {
+      const item = b.items[id];
+      if (item?.type === "column") for (const c of item.children || []) toRemove.add(c);
+    }
+    for (const id of toRemove) {
       const item = b.items[id];
       if (!item) continue;
       if (item.type === "board" && item.boardId) deleteBoardTree(item.boardId);
       delete b.items[id];
     }
-    b.edges = b.edges.filter(e => !ids.includes(e.from) && !ids.includes(e.to));
+    for (const it of Object.values(b.items))
+      if (it.type === "column" && it.children) it.children = it.children.filter(c => !toRemove.has(c));
+    b.edges = b.edges.filter(e => !toRemove.has(e.from) && !toRemove.has(e.to));
+    save();
+  }
+
+  // ---- columns ----
+  function findColumnOf(id) {
+    for (const it of Object.values(board().items))
+      if (it.type === "column" && it.children && it.children.includes(id)) return it;
+    return null;
+  }
+
+  // No snapshot here: callers snapshot once around the whole gesture.
+  function dockItem(id, colId, index) {
+    const b = board();
+    const item = b.items[id], col = b.items[colId];
+    if (!item || !col || col.type !== "column" || item.type === "column") return;
+    undockItem(id);
+    col.children = col.children || [];
+    index = Math.max(0, Math.min(index, col.children.length));
+    col.children.splice(index, 0, id);
+    save();
+  }
+
+  function undockItem(id) {
+    const col = findColumnOf(id);
+    if (!col) return;
+    col.children = col.children.filter(c => c !== id);
     save();
   }
 
@@ -191,12 +225,26 @@ const Store = (() => {
     snapshot();
     const b = board();
     const clones = [];
+    const idSet = new Set(ids);
     for (const id of ids) {
       const src = b.items[id];
       if (!src || src.type === "board") continue; // don't deep-copy boards
+      const parentCol = findColumnOf(id);
+      if (parentCol && idSet.has(parentCol.id)) continue; // cloned along with its column
       const clone = JSON.parse(JSON.stringify(src));
       clone.id = uid();
       clone.x += 24; clone.y += 24; clone.z = nextZ();
+      if (src.type === "column") {
+        clone.children = [];
+        for (const cid of src.children || []) {
+          const child = b.items[cid];
+          if (!child || child.type === "board") continue;
+          const cc = JSON.parse(JSON.stringify(child));
+          cc.id = uid(); cc.z = nextZ();
+          b.items[cc.id] = cc;
+          clone.children.push(cc.id);
+        }
+      }
       b.items[clone.id] = clone;
       clones.push(clone);
     }
@@ -256,6 +304,7 @@ const Store = (() => {
     get state() { return state; },
     init,
     board, createItem, update, removeItems, duplicateItems,
+    findColumnOf, dockItem, undockItem,
     addEdge, removeEdge,
     navigate, breadcrumbs, boardStats,
     snapshot, save,

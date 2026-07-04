@@ -209,6 +209,12 @@ body {
 }
 .card.column .card-title { text-align: center; margin-bottom: 8px; color: #565c63; }
 .card.column .card-title:empty::before { content: "Column"; }
+.card.column.drop-target { border-color: var(--accent); background: rgba(74, 144, 217, 0.10); }
+
+#drop-indicator {
+  position: absolute; top: 0; left: 0; height: 3px; border-radius: 2px;
+  background: var(--accent); pointer-events: none; z-index: 2000;
+}
 
 /* color bar */
 .card[data-color="yellow"] { background: #fef9dd; }
