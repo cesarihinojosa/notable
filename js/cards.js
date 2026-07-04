@@ -133,8 +133,12 @@ const Cards = (() => {
 
     image(el, item) {
       const img = document.createElement("img");
-      img.src = item.src;
       img.draggable = false;
+      if (typeof item.src === "string" && item.src.startsWith("idb:")) {
+        Store.getImageURL(item.src.slice(4)).then((url) => { if (url) img.src = url; });
+      } else {
+        img.src = item.src;
+      }
       el.appendChild(img);
       el.appendChild(editable("div", "img-caption", item.caption || "", commit(item.id, "caption"), { multiline: false }));
     },

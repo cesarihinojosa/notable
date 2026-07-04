@@ -1,7 +1,7 @@
 "use strict";
 
 const Store = (() => {
-  const KEY = "notable.v1";
+  const LEGACY_KEY = "notable.v1"; // pre-IndexedDB localStorage key
 
   const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -9,31 +9,90 @@ const Store = (() => {
     return { id: uid(), name, parentId, items: {}, edges: [], view: { x: 0, y: 0, z: 1 } };
   }
 
-  let state = load();
+  let state = null;
 
-  function load() {
+  async function init() {
+    let s = null;
+    try { s = await DB.get("state", "state"); }
+    catch (e) { console.warn("IndexedDB unavailable, starting fresh", e); }
+    if (!s) s = await migrateFromLocalStorage();
+    if (!s || !s.boards || !s.rootId || !s.boards[s.rootId]) {
+      const root = blankBoard("My Board");
+      s = { boards: { [root.id]: root }, rootId: root.id, currentId: root.id };
+    }
+    if (!s.boards[s.currentId]) s.currentId = s.rootId;
+    state = s;
+    gcImages().catch(() => {});
+  }
+
+  async function migrateFromLocalStorage() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(LEGACY_KEY)); } catch { return null; }
+    if (!s || !s.boards || !s.rootId) return null;
     try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const s = JSON.parse(raw);
-        if (s && s.boards && s.rootId) return s;
+      await internImages(s);
+      await DB.put("state", "state", s);
+      localStorage.removeItem(LEGACY_KEY);
+    } catch (e) { console.warn("Migration to IndexedDB failed", e); }
+    return s;
+  }
+
+  // Convert any inline data-URL images to Blobs in the images store.
+  async function internImages(s) {
+    for (const b of Object.values(s.boards)) {
+      for (const it of Object.values(b.items)) {
+        if (it.type === "image" && typeof it.src === "string" && it.src.startsWith("data:")) {
+          const blob = await (await fetch(it.src)).blob();
+          it.src = "idb:" + await putImage(blob);
+        }
       }
-    } catch (e) { console.warn("Failed to load saved state", e); }
-    const root = blankBoard("My Board");
-    return { boards: { [root.id]: root }, rootId: root.id, currentId: root.id };
+    }
   }
 
   let saveTimer = null;
   function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      try {
-        localStorage.setItem(KEY, JSON.stringify(state));
-      } catch (e) {
-        console.error("Save failed (storage may be full)", e);
-      }
+      DB.put("state", "state", state).catch((e) => console.error("Save failed", e));
     }, 200);
   }
+
+  // ---- images ----
+  const urlCache = new Map(); // image id -> object URL
+
+  async function putImage(blob) {
+    const id = uid();
+    await DB.put("images", id, blob);
+    return id;
+  }
+
+  async function getImageURL(id) {
+    if (urlCache.has(id)) return urlCache.get(id);
+    const blob = await DB.get("images", id);
+    if (!blob) return null;
+    const url = URL.createObjectURL(blob);
+    urlCache.set(id, url);
+    return url;
+  }
+
+  // Blobs are kept when their card is deleted so in-session undo can restore
+  // them; orphans are swept on the next startup instead.
+  async function gcImages() {
+    const referenced = new Set();
+    for (const b of Object.values(state.boards))
+      for (const it of Object.values(b.items))
+        if (it.type === "image" && typeof it.src === "string" && it.src.startsWith("idb:"))
+          referenced.add(it.src.slice(4));
+    for (const key of await DB.keys("images"))
+      if (!referenced.has(key)) await DB.del("images", key);
+  }
+
+  const blobToDataURL = (blob) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
 
   // ---- undo/redo: snapshot current board's content ----
   const undoStack = [];
@@ -167,26 +226,40 @@ const Store = (() => {
     return { count: Object.keys(b.items).length };
   }
 
-  function exportJSON() {
-    return JSON.stringify(state, null, 2);
+  // Export inlines idb: images as data URLs so the file is self-contained.
+  async function exportJSON() {
+    const clone = JSON.parse(JSON.stringify(state));
+    for (const b of Object.values(clone.boards)) {
+      for (const it of Object.values(b.items)) {
+        if (it.type === "image" && typeof it.src === "string" && it.src.startsWith("idb:")) {
+          const blob = await DB.get("images", it.src.slice(4));
+          if (blob) it.src = await blobToDataURL(blob);
+        }
+      }
+    }
+    return JSON.stringify(clone, null, 2);
   }
 
-  function importJSON(text) {
+  async function importJSON(text) {
     const s = JSON.parse(text);
     if (!s || !s.boards || !s.rootId || !s.boards[s.rootId]) throw new Error("Not a valid export file");
+    await internImages(s);
+    if (!s.boards[s.currentId]) s.currentId = s.rootId;
     state = s;
-    if (!state.boards[state.currentId]) state.currentId = state.rootId;
     undoStack.length = 0;
     redoStack.length = 0;
-    save();
+    await DB.put("state", "state", state);
+    gcImages().catch(() => {});
   }
 
   return {
     get state() { return state; },
+    init,
     board, createItem, update, removeItems, duplicateItems,
     addEdge, removeEdge,
     navigate, breadcrumbs, boardStats,
     snapshot, save,
+    putImage, getImageURL,
     undo: () => restore(undoStack, redoStack),
     redo: () => restore(redoStack, undoStack),
     exportJSON, importJSON,

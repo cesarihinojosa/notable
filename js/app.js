@@ -156,19 +156,19 @@ const App = (() => {
   });
 
   function addImageFile(file, pos) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const w = Math.min(320, img.naturalWidth || 320);
-        const h = Math.round(w * (img.naturalHeight / img.naturalWidth)) || 200;
-        const p = pos || Board.centerOn();
-        Store.createItem("image", { x: Math.round(p.x - w / 2), y: Math.round(p.y - h / 2), w, h, src: reader.result });
-        Board.renderBoard();
-      };
-      img.src = reader.result;
+    const objUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = async () => {
+      const w = Math.min(320, img.naturalWidth || 320);
+      const h = Math.round(w * (img.naturalHeight / img.naturalWidth)) || 200;
+      URL.revokeObjectURL(objUrl);
+      const id = await Store.putImage(file);
+      const p = pos || Board.centerOn();
+      Store.createItem("image", { x: Math.round(p.x - w / 2), y: Math.round(p.y - h / 2), w, h, src: "idb:" + id });
+      Board.renderBoard();
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => URL.revokeObjectURL(objUrl);
+    img.src = objUrl;
   }
 
   // ---------- context menu ----------
@@ -258,8 +258,8 @@ const App = (() => {
   });
 
   // ---------- export / import ----------
-  document.getElementById("btn-export").addEventListener("click", () => {
-    const blob = new Blob([Store.exportJSON()], { type: "application/json" });
+  document.getElementById("btn-export").addEventListener("click", async () => {
+    const blob = new Blob([await Store.exportJSON()], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = "notable-boards-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -272,10 +272,10 @@ const App = (() => {
   importInput.addEventListener("change", () => {
     const f = importInput.files[0];
     if (!f) return;
-    f.text().then((text) => {
+    f.text().then(async (text) => {
       if (!confirm("Importing replaces all current boards. Continue?")) return;
       try {
-        Store.importJSON(text);
+        await Store.importJSON(text);
         Board.renderBoard();
       } catch (err) {
         alert("Import failed: " + err.message);
@@ -288,7 +288,7 @@ const App = (() => {
   setTimeout(() => document.getElementById("hint").classList.add("faded"), 8000);
 
   // ---------- init ----------
-  Board.renderBoard();
+  Store.init().then(() => Board.renderBoard());
 
   return { exitConnectMode, addItem };
 })();
